@@ -1,0 +1,85 @@
+#!/bin/bash
+##
+##
+##    LETS ENCRYPT AUTOMATION
+##
+##                                by Damia Soler
+##                                Contact  damia (at) damia (dot) net
+##				  https://blog.damia.net
+##				  https://github.com/damiadev/autole/
+##
+##
+##==================================================
+## SETUP
+##
+##
+##
+##    REMAINING DAYS TO EXPIRE BEFORE RENEW
+##
+DAYSTORENEW=10
+##
+##   REMAINING DAYS TO EXPIRE BEFORE ALERT
+##
+DAYSTOALERT=5
+##
+##    EMAIL TO ALERT IF UNABLE TO RENEW
+##
+ALERTEMAIL=root@localhost
+##
+##    EMAIL ACCOUNT ON LETS ENCRYPT
+##
+LEEMAIL=admin@example.com
+## 
+WEBROOT=/www/htdocs/le/
+##WEBROOT=/www/htdocs/le/$1
+##
+##
+LEBIN=/root/.local/share/letsencrypt/bin/letsencrypt
+##
+CERTFILE=/etc/letsencrypt/live/$1/cert.pem
+##====================================================================================
+if test $1 = "--renew-all" ; then 
+	echo Checking certificates
+	ls -1 /etc/letsencrypt/live|xargs -n1 $0 ;
+	/etc/init.d/apache2 graceful
+	exit ; 
+fi; 
+##====================================================================================
+if test -a $CERTFILE ; then 
+		d1=$(date -d "`openssl x509 -in $CERTFILE -text -noout|grep "Not After"|cut -c 25-`" +%s)
+		d2=$(date -d "now" +%s)
+		DAYS=` echo \( $d1 -  $d2 \)  / 86400 |bc `
+		echo -n `date` DOMAIN $1 will expire in $DAYS days " "
+	else
+		echo -n `date` DOMAIN $1 new
+		DAYS=$DAYSTOALERT;
+fi;
+if test $DAYS -lt $DAYSTORENEW ; then
+				echo Trying to renew ;
+				### PRETEST TO NOT MESS LE SERVERS IF YOU ARE NOT ANSWERING THE CHALLENGE
+				TESTFILE=$RANDOM
+				echo test> $WEBROOT/.well-known/acme-challenge/$TESTFILE
+				URL=http://$1/.well-known/acme-challenge/$TESTFILE
+				mkdir -p $WEBROOT/.well-known/acme-challenge
+				touch $WEBROOT/.well-known/acme-challenge/index.html
+				echo test> $WEBROOT/.well-known/acme-challenge/$TESTFILE
+				if curl --output /dev/null --silent --head --fail "$URL"; then
+							echo $LEBIN --renew-by-default -a webroot --webroot-path $WEBROOT --email $LEEMAIL --text --agree-tos -d $1 auth
+							$LEBIN --renew-by-default -a webroot --webroot-path $WEBROOT --email $LEEMAIL --text --agree-tos -d $1 auth
+							echo SSLEngine on
+							echo SSLCertificateFile /etc/letsencrypt/live/$1/cert.pem
+							echo SSLCertificateKeyFile /etc/letsencrypt/live/$1/privkey.pem
+							echo SSLCertificateChainFile /etc/letsencrypt/live/$1/fullchain.pem
+				else
+				  			echo "CAN NOT ACCESS THE PRE-CHALLENGE $URL PLEASE ADD ALIAS TO YOUR VIRTUALHOST CONF" ;
+							echo "Alias /.well-known      $WEBROOT/.well-known" ; 
+				fi
+				rm $WEBROOT/.well-known/acme-challenge/$TESTFILE
+				else
+				echo no close to expire ;
+fi ;
+
+if test $DAYS -lt $DAYSTOALERT ; then
+				echo ALERT DOMAIN $1 CERTIFICATE RENEWAL PROBLEM|mail $ALERTEMAIL ;
+				echo ALERT DOMAIN $1 CERTIFICATE RENEWAL PROBLEM ;
+fi;
