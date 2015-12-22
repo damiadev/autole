@@ -1,85 +1,112 @@
-#!/bin/bash
-##
-##
-##    LETS ENCRYPT AUTOMATION
-##
-##                                by Damia Soler
-##                                Contact  damia (at) damia (dot) net
-##				  https://eblog.damia.net/2015/12/03/lets-encrypt-automation-on-debian/
-##				  https://github.com/damiadev/autole/
-##
-##
-##==================================================
-## SETUP
-##
-##
-##
-##    REMAINING DAYS TO EXPIRE BEFORE RENEW
-##
-DAYSTORENEW=10
-##
-##   REMAINING DAYS TO EXPIRE BEFORE ALERT
-##
-DAYSTOALERT=5
-##
-##    EMAIL TO ALERT IF UNABLE TO RENEW
-##
-ALERTEMAIL=root@localhost
-##
-##    EMAIL ACCOUNT ON LETS ENCRYPT
-##
-LEEMAIL=admin@example.com
-## 
-WEBROOT=/www/htdocs/le/
-##WEBROOT=/www/htdocs/le/$1
-##
-##
-LEBIN=/root/.local/share/letsencrypt/bin/letsencrypt
-##
-CERTFILE=/etc/letsencrypt/live/$1/cert.pem
-##====================================================================================
-if test $1 = "--renew-all" ; then 
-	echo Checking certificates
-	ls -1 /etc/letsencrypt/live|xargs -n1 $0 ;
-	/etc/init.d/apache2 graceful
-	exit ; 
-fi; 
-##====================================================================================
-if test -a $CERTFILE ; then 
-		d1=$(date -d "`openssl x509 -in $CERTFILE -text -noout|grep "Not After"|cut -c 25-`" +%s)
-		d2=$(date -d "now" +%s)
-		DAYS=` echo \( $d1 -  $d2 \)  / 86400 |bc `
-		echo -n `date` DOMAIN $1 will expire in $DAYS days " "
-	else
-		echo -n `date` DOMAIN $1 new
-		DAYS=$DAYSTOALERT;
-fi;
-if test $DAYS -lt $DAYSTORENEW ; then
-				echo Trying to renew ;
-				### PRETEST TO NOT MESS LE SERVERS IF YOU ARE NOT ANSWERING THE CHALLENGE
-				TESTFILE=$RANDOM
-				echo test> $WEBROOT/.well-known/acme-challenge/$TESTFILE
-				URL=http://$1/.well-known/acme-challenge/$TESTFILE
-				mkdir -p $WEBROOT/.well-known/acme-challenge
-				touch $WEBROOT/.well-known/acme-challenge/index.html
-				echo test> $WEBROOT/.well-known/acme-challenge/$TESTFILE
-				if curl --output /dev/null --silent --head --fail "$URL"; then
-							echo $LEBIN --renew-by-default -a webroot --webroot-path $WEBROOT --email $LEEMAIL --text --agree-tos -d $1 auth
-							$LEBIN --renew-by-default -a webroot --webroot-path $WEBROOT --email $LEEMAIL --text --agree-tos -d $1 auth
-							echo SSLEngine on
-							echo SSLCertificateFile /etc/letsencrypt/live/$1/cert.pem
-							echo SSLCertificateKeyFile /etc/letsencrypt/live/$1/privkey.pem
-							echo SSLCertificateChainFile /etc/letsencrypt/live/$1/fullchain.pem
-				else
-				  			echo "CAN NOT ACCESS THE PRE-CHALLENGE $URL PLEASE ADD ALIAS TO YOUR VIRTUALHOST CONF" ;
-							echo "Alias /.well-known      $WEBROOT/.well-known" ; 
-				fi
-				rm $WEBROOT/.well-known/acme-challenge/$TESTFILE
-				else
-				echo no close to expire ;
-fi ;
+#! /bin/bash
+#
+# LET'S ENCRYPT AUTOMATION
+#
+# by Damia Soler
+# Contact: damia (at) damia (dot) net
+# https://blog.damia.net
+#
+# You will need bc, xargs, curl, apache2ctl, mail, openssl.
+# Be sure to configure "LEEMAIL" below.
 
-if test $DAYS -lt $DAYSTOALERT ; then
-				echo ALERT DOMAIN $1 CERTIFICATE RENEWAL PROBLEM|mail $ALERTEMAIL ;
-				echo ALERT DOMAIN $1 CERTIFICATE RENEWAL PROBLEM ;
-fi;
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+# Remaining days to expire before renewal
+DAYSTORENEW=10
+
+# Remaining days to expire before alert (this is supposed to be less than DAYSTORENEW)
+DAYSTOALERT=5
+
+# Email to alert if unable to renew (leave blank to suppress notification mails)
+ALERTEMAIL=root@localhost
+
+# Email account on Let's Encrypt
+LEEMAIL=admin@example.com
+
+WEBROOT=/var/www/html/letsencrypt
+ACMEPATH=.well-known/acme-challenge
+LEBIN=/root/.local/share/letsencrypt/bin/letsencrypt
+APACHE_RELOAD=false
+
+
+function checkAndRenew() {
+	echo "Checking domain '${DOMAIN}'"
+	CERTFILE=/etc/letsencrypt/live/${DOMAIN}/cert.pem
+	
+	# Check expiration date
+	if [ -f ${CERTFILE} ]; then
+		d1=$(date -d "`openssl x509 -in ${CERTFILE} -text -noout | grep "Not After" | cut -c 25-`" +%s)
+		d2=$(date -d "now" +%s)
+		DAYSEXP=`echo \(${d1} - ${d2}\) / 86400 | bc`
+		echo "Domain '${DOMAIN}' will expire in ${DAYSEXP} days"
+	else
+		echo "Domain '${DOMAIN}' has no cert yet"
+		# Set DAYSEXP so that a cert will be requested, but no alert will be issued
+		DAYSEXP=${DAYSTOALERT}
+	fi
+	
+	
+	# Check if cert needs to be renewed
+	if [ ${DAYSEXP} -lt ${DAYSTORENEW} ]; then
+		echo "Trying to renew..."
+	
+		# Pre-Test to not mess up the server if you are not answering the challenge
+		TESTFILE=${RANDOM}
+		URL=http://${DOMAIN}/${ACMEPATH}/${TESTFILE}
+		mkdir -p ${WEBROOT}/${ACMEPATH}
+		echo "test" > ${WEBROOT}/${ACMEPATH}/${TESTFILE}
+	
+		if curl --output /dev/null --silent --head --fail "${URL}"; then
+			${LEBIN} --renew-by-default -a webroot --webroot-path ${WEBROOT} --email ${LEEMAIL} --text --agree-tos -d ${DOMAIN} auth
+			APACHE_RELOAD=true
+		else
+			echo ""
+			echo "Cannot access the pre-challenge '${URL}'"
+			echo "Please add an alias to your webserver:"
+			echo "'Alias /.well-known ${WEBROOT}/.well-known'"
+		fi
+	
+		rm -f "${WEBROOT}/${ACMEPATH}/${TESTFILE}"
+	else
+		echo "Cert is not yet to expire"
+	fi
+	
+	if [ ${DAYSEXP} -lt ${DAYSTOALERT} ]; then
+		msg="Alert! The domain '${DOMAIN}' might have a certificate renewal problem. Please check it manually."
+	
+		# Send email if adress is configured
+		if [ -n ${ALERTEMAIL} ]; then
+			echo "${msg}" | mail -s "Let's Encrypt Automation" ${ALERTEMAIL}
+		fi
+	
+		echo "${msg}"
+	fi
+
+	echo ""
+}
+
+
+
+# Parse the params
+if [ -z $1 ]; then
+	echo "Please specify one or more domains (separated by a space) as a parameter or '--renew-all' to process all existing certs."
+	exit 1
+fi
+
+# Renew all domains or specific ones?
+if [ $1 = "--renew-all" ]; then
+	ALLDOMAINS=`ls -1 /etc/letsencrypt/live`
+else
+	# Array will now only contain all the domains specified via command line
+	ALLDOMAINS=$*
+fi
+
+for DOMAIN in ${ALLDOMAINS}; do
+    checkAndRenew
+done
+
+# Reload Apache only if necessary
+if [ "${APACHE_RELOAD}" = true ]; then
+	echo "Reloading Apache configuration"
+	apache2ctl -t && /etc/init.d/apache2 reload
+fi
