@@ -4,7 +4,7 @@
 #
 # by Damia Soler
 # Contact: damia (at) damia (dot) net
-# https://blog.damia.net
+# https://eblog.damia.net/2015/12/03/lets-encrypt-automation-on-debian/
 #
 # You will need bc, xargs, curl, apache2ctl, mail, openssl.
 # Be sure to configure "LEEMAIL" below.
