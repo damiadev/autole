@@ -57,7 +57,13 @@ function checkAndRenew() {
 		echo "test" > ${WEBROOT}/${ACMEPATH}/${TESTFILE}
 	
 		if curl --output /dev/null --silent --head --fail "${URL}"; then
-			${LEBIN} --renew-by-default -a webroot --webroot-path ${WEBROOT} --email ${LEEMAIL} --text --agree-tos -d ${DOMAIN} auth
+			COMMAND="${LEBIN} --renew-by-default -a webroot --webroot-path ${WEBROOT} --email ${LEEMAIL} --text --agree-tos"
+			DNS=`openssl x509 -noout -text -in ${CERTFILE} |grep DNS:|sed -e 's/ *DNS://g;s/,/ /g'`
+			for i in ${DNS}; do
+				COMMAND="${COMMAND} -d $i"
+			done
+			COMMAND="${COMMAND} auth"
+			${COMMAND}
 			APACHE_RELOAD=true
 		else
 			echo ""
