@@ -115,5 +115,5 @@ done
 # Reload Apache only if necessary
 if [ "${APACHE_RELOAD}" = true ]; then
 	echo "Reloading Apache configuration"
-	apache2ctl -t && /etc/init.d/apache2 reload
+	apache2ctl -t && /etc/init.d/apache2 graceful
 fi
